@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+# Install dependencies from yum
+yum install -y epel-release
+yum install -y libmcrypt-devel
+yum install -y libpng12
+yum install -y libjpeg
+yum install -y openssl-devel
+yum install -y gcc
+
+# Install libiconv from source
+wget http://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.14.tar.gz
+tar zxf libiconv-1.14.tar.gz
+cd libiconv-1.14
+perl -i -pe 's/(.*)/#if defined(__GLIBC__) && !defined(__UCLIBC__) && !__GLIBC_PREREQ(2,16)\n$1\n#endif/ if $.==698' srclib/stdio.in.h
+./configure
+make
+make install
+
+# Link dependent libriray
+ln -s /usr/lib64/libssl.so.1.0.1e  /usr/lib64/libssl.so.1.0.0
+ln -s /usr/lib64/libcrypto.so  /usr/lib64/libcrypto.so.1.0.0
+ln -s /usr/lib64/libpcre.so.1 /lib64/libpcre.so.0
+
+# Export library path
+export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
+
+# Create nginx service
+echo '[Unit]
+Description=The NGINX HTTP and reverse proxy server
+After=syslog.target network.target remote-fs.target nss-lookup.target
+
+[Service]
+Type=forking
+PIDFile=/alidata/server/nginx/logs/nginx.pid
+ExecStartPre=/alidata/server/nginx/sbin/nginx -t
+ExecStart=/alidata/server/nginx/sbin/nginx
+ExecReload=/bin/kill -s HUP $MAINPID
+ExecStop=/bin/kill -s QUIT $MAINPID
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target' > /lib/systemd/system/nginx.service
+
+# Create php-fpm service
+echo '[Unit]
+Description=PHP FastCGI process manager
+After=local-fs.target network.target nginx.service
+
+[Service]
+Type=forking
+PIDFile=/alidata/server/php/var/run/php-fpm.pid
+ExecStart=/alidata/server/php/sbin/php-fpm --fpm-config /alidata/server/php/etc/php-fpm.conf
+ExecReload=/bin/kill -s HUP $MAINPID
+ExecStop=/bin/kill -s QUIT $MAINPID
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target' > /lib/systemd/system/php-fpm.service
+
+# Start and save nginx service
+systemctl start nginx
+systemctl enable nginx
+
+# Start and save php-fpm service
+systemctl start php-fpm
+systemctl enable php-fpm
+
+# Set firewall
+# Ref: https://linuxconfig.org/how-to-open-http-port-80-on-redhat-7-linux-using-firewall-cmd
+firewall-cmd --zone=public --add-port=80/tcp --permanent
+firewall-cmd --reload
+
+# Copy file and set the permissions
+cp -r /home/ant/alidata /
+groupadd www
+useradd -g www www
+chown -R www /alidata
+chgrp -R www /alidata
